@@ -1,0 +1,603 @@
+<!DOCTYPE html>
+<html lang=zh>
+<head>
+  <meta charset="utf-8">
+  
+  <meta http-equiv="X-UA-Compatible" content="IE=edge,chrome=1">
+  <meta name="viewport" content="width=device-width, initial-scale=1, maximum-scale=1, minimum-scale=1, user-scalable=no, minimal-ui">
+  <meta name="renderer" content="webkit">
+  <meta http-equiv="Cache-Control" content="no-transform" />
+  <meta http-equiv="Cache-Control" content="no-siteapp" />
+  <meta name="apple-mobile-web-app-capable" content="yes">
+  <meta name="apple-mobile-web-app-status-bar-style" content="black">
+  <meta name="format-detection" content="telephone=no,email=no,adress=no">
+  <!-- Color theme for statusbar -->
+  <meta name="theme-color" content="#000000" />
+  <!-- 强制页面在当前窗口以独立页面显示,防止别人在框架里调用页面 -->
+  <meta http-equiv="window-target" content="_top" />
+  
+  
+  <title>从Redis I/O多路复用到Java NIO Selector | Hexo</title>
+  <meta name="description" content="Redis的I&#x2F;O多路复用架构Redis的一大特点就是单线程架构。单线程架构既避免了多线程可能产生的竞争问题，又避免了多线程的频繁上下文切换问题，是Redis高效率的保证。">
+<meta property="og:type" content="article">
+<meta property="og:title" content="从Redis I&#x2F;O多路复用到Java NIO Selector">
+<meta property="og:url" content="https://yuitycc.me/2019/06/04/%E4%BB%8ERedis-I-O%E5%A4%9A%E8%B7%AF%E5%A4%8D%E7%94%A8%E5%88%B0Java-NIO-Selector/index.html">
+<meta property="og:site_name" content="YuiTycc的博客">
+<meta property="og:description" content="Redis的I&#x2F;O多路复用架构Redis的一大特点就是单线程架构。单线程架构既避免了多线程可能产生的竞争问题，又避免了多线程的频繁上下文切换问题，是Redis高效率的保证。">
+<meta property="og:locale">
+<meta property="article:published_time" content="2019-06-04T07:19:21.000Z">
+<meta property="article:modified_time" content="2021-01-03T06:56:41.175Z">
+<meta property="article:author" content="YuiTycc">
+<meta property="article:tag" content="Java">
+<meta property="article:tag" content="Redis">
+<meta name="twitter:card" content="summary">
+  <!-- Canonical links -->
+  <link rel="canonical" href="https://yuitycc.me/2019/06/04/%E4%BB%8ERedis-I-O%E5%A4%9A%E8%B7%AF%E5%A4%8D%E7%94%A8%E5%88%B0Java-NIO-Selector/index.html">
+  
+    <link rel="alternate" href="/atom.xml" title="YuiTycc的博客" type="application/atom+xml">
+  
+  
+    <link rel="icon" href="/favicon.png" type="image/x-icon">
+  
+  
+<link rel="stylesheet" href="/css/style.css">
+
+  
+  
+  
+  
+<meta name="generator" content="Hexo 5.3.0"></head>
+
+
+<body class="main-center" itemscope itemtype="http://schema.org/WebPage">
+  <header class="header" itemscope itemtype="http://schema.org/WPHeader">
+  <div class="slimContent">
+    <div class="navbar-header">
+      
+      
+      <div class="profile-block text-center">
+        <a id="avatar" href="https://github.com/YuiTycc" target="_blank">
+          <img class="img-circle img-rotate" src="/images/avatar.jpg" width="200" height="200">
+        </a>
+        <h2 id="name" class="hidden-xs hidden-sm">YuiTycc</h2>
+        <h3 id="title" class="hidden-xs hidden-sm hidden-md">a</h3>
+        <small id="location" class="text-muted hidden-xs hidden-sm"><i class="icon icon-map-marker"></i> Shanghai, China</small>
+      </div>
+      
+      <div class="search" id="search-form-wrap">
+
+    <form class="search-form sidebar-form">
+        <div class="input-group">
+            <input type="text" class="search-form-input form-control" placeholder="Search" />
+            <span class="input-group-btn">
+                <button type="submit" class="search-form-submit btn btn-flat" onclick="return false;"><i class="icon icon-search"></i></button>
+            </span>
+        </div>
+    </form>
+    <div class="ins-search">
+  <div class="ins-search-mask"></div>
+  <div class="ins-search-container">
+    <div class="ins-input-wrapper">
+      <input type="text" class="ins-search-input" placeholder="Type something..." x-webkit-speech />
+      <button type="button" class="close ins-close ins-selectable" data-dismiss="modal" aria-label="Close"><span aria-hidden="true">×</span></button>
+    </div>
+    <div class="ins-section-wrapper">
+      <div class="ins-section-container"></div>
+    </div>
+  </div>
+</div>
+
+
+</div>
+      <button class="navbar-toggle collapsed" type="button" data-toggle="collapse" data-target="#main-navbar" aria-controls="main-navbar" aria-expanded="false">
+        <span class="sr-only">Toggle navigation</span>
+        <span class="icon-bar"></span>
+        <span class="icon-bar"></span>
+        <span class="icon-bar"></span>
+      </button>
+    </div>
+    <nav id="main-navbar" class="collapse navbar-collapse" itemscope itemtype="http://schema.org/SiteNavigationElement" role="navigation">
+      <ul class="nav navbar-nav main-nav ">
+        
+        
+        <li class="menu-item menu-item-home">
+          <a href="/.">
+            
+            <i class="icon icon-home-fill"></i>
+            
+            <span class="menu-title">Home</span>
+          </a>
+        </li>
+        
+        
+        <li class="menu-item menu-item-archives">
+          <a href="/archives">
+            
+            <i class="icon icon-archives-fill"></i>
+            
+            <span class="menu-title">Archives</span>
+          </a>
+        </li>
+        
+        
+        <li class="menu-item menu-item-categories">
+          <a href="/categories">
+            
+            <i class="icon icon-folder"></i>
+            
+            <span class="menu-title">Categories</span>
+          </a>
+        </li>
+        
+        
+        <li class="menu-item menu-item-tags">
+          <a href="/tags">
+            
+            <i class="icon icon-tags"></i>
+            
+            <span class="menu-title">Tags</span>
+          </a>
+        </li>
+        
+        
+        <li class="menu-item menu-item-repository">
+          <a href="/repository">
+            
+            <i class="icon icon-project"></i>
+            
+            <span class="menu-title">Repository</span>
+          </a>
+        </li>
+        
+        
+        <li class="menu-item menu-item-books">
+          <a href="/books">
+            
+            <i class="icon icon-book-fill"></i>
+            
+            <span class="menu-title">Books</span>
+          </a>
+        </li>
+        
+        
+        <li class="menu-item menu-item-links">
+          <a href="/links">
+            
+            <i class="icon icon-friendship"></i>
+            
+            <span class="menu-title">Links</span>
+          </a>
+        </li>
+        
+        
+        <li class="menu-item menu-item-about">
+          <a href="/about">
+            
+            <i class="icon icon-cup-fill"></i>
+            
+            <span class="menu-title">About</span>
+          </a>
+        </li>
+        
+      </ul>
+      
+	
+    <ul class="social-links">
+    	
+        <li><a href="https://github.com/YuiTycc" target="_blank" title="Github" data-toggle=tooltip data-placement=top><i class="icon icon-github"></i></a></li>
+        
+    </ul>
+
+    </nav>
+  </div>
+</header>
+
+  
+    <aside class="sidebar" itemscope itemtype="http://schema.org/WPSideBar">
+  <div class="slimContent">
+    
+      <div class="widget">
+    <h3 class="widget-title">Board</h3>
+    <div class="widget-body">
+        <div id="board">
+            <div class="content">
+                <p>欢迎交流与分享经验!</p>
+            </div>
+        </div>
+    </div>
+</div>
+
+    
+      
+  <div class="widget">
+    <h3 class="widget-title">Categories</h3>
+    <div class="widget-body">
+      <ul class="category-list"><li class="category-list-item"><a class="category-list-link" href="/categories/%E5%88%B7%E9%A2%98/">刷题</a><span class="category-list-count">1</span></li><li class="category-list-item"><a class="category-list-link" href="/categories/%E5%BC%80%E5%8F%91/">开发</a><span class="category-list-count">8</span></li></ul>
+    </div>
+  </div>
+
+
+    
+      
+  <div class="widget">
+    <h3 class="widget-title">Tags</h3>
+    <div class="widget-body">
+      <ul class="tag-list" itemprop="keywords"><li class="tag-list-item"><a class="tag-list-link" href="/tags/Java/" rel="tag">Java</a><span class="tag-list-count">5</span></li><li class="tag-list-item"><a class="tag-list-link" href="/tags/Redis/" rel="tag">Redis</a><span class="tag-list-count">2</span></li><li class="tag-list-item"><a class="tag-list-link" href="/tags/%E5%B9%B6%E5%8F%91/" rel="tag">并发</a><span class="tag-list-count">3</span></li><li class="tag-list-item"><a class="tag-list-link" href="/tags/%E7%AE%97%E6%B3%95/" rel="tag">算法</a><span class="tag-list-count">2</span></li><li class="tag-list-item"><a class="tag-list-link" href="/tags/%E9%9D%A2%E7%BB%8F/" rel="tag">面经</a><span class="tag-list-count">1</span></li></ul>
+    </div>
+  </div>
+
+
+    
+      
+  <div class="widget">
+    <h3 class="widget-title">Tag Cloud</h3>
+    <div class="widget-body tagcloud">
+      <a href="/tags/Java/" style="font-size: 14px;">Java</a> <a href="/tags/Redis/" style="font-size: 13.33px;">Redis</a> <a href="/tags/%E5%B9%B6%E5%8F%91/" style="font-size: 13.67px;">并发</a> <a href="/tags/%E7%AE%97%E6%B3%95/" style="font-size: 13.33px;">算法</a> <a href="/tags/%E9%9D%A2%E7%BB%8F/" style="font-size: 13px;">面经</a>
+    </div>
+  </div>
+
+    
+      
+  <div class="widget">
+    <h3 class="widget-title">Archive</h3>
+    <div class="widget-body">
+      <ul class="archive-list"><li class="archive-list-item"><a class="archive-list-link" href="/archives/2019/06/">June 2019</a><span class="archive-list-count">4</span></li><li class="archive-list-item"><a class="archive-list-link" href="/archives/2019/05/">May 2019</a><span class="archive-list-count">1</span></li><li class="archive-list-item"><a class="archive-list-link" href="/archives/2019/03/">March 2019</a><span class="archive-list-count">4</span></li></ul>
+    </div>
+  </div>
+
+
+    
+      
+  <div class="widget">
+    <h3 class="widget-title">Recent Posts</h3>
+    <div class="widget-body">
+      <ul class="recent-post-list list-unstyled no-thumbnail">
+        
+          <li>
+            
+            <div class="item-inner">
+              <p class="item-category">
+                <a class="category-link" href="/categories/%E5%BC%80%E5%8F%91/">开发</a>
+              </p>
+              <p class="item-title">
+                <a href="/2019/06/23/%E8%99%8E%E6%89%91%E9%9D%A2%E7%BB%8F%E4%B8%8E%E6%80%BB%E7%BB%93/" class="title">虎扑面经</a>
+              </p>
+              <p class="item-date">
+                <time datetime="2019-06-23T13:51:06.000Z" itemprop="datePublished">2019-06-23</time>
+              </p>
+            </div>
+          </li>
+          
+          <li>
+            
+            <div class="item-inner">
+              <p class="item-category">
+                <a class="category-link" href="/categories/%E5%BC%80%E5%8F%91/">开发</a>
+              </p>
+              <p class="item-title">
+                <a href="/2019/06/14/Java-%E5%90%8C%E6%AD%A5%E5%99%A8%E6%A0%B8%E5%BF%83AQS/" class="title">Java 同步器核心AQS</a>
+              </p>
+              <p class="item-date">
+                <time datetime="2019-06-14T03:27:12.000Z" itemprop="datePublished">2019-06-14</time>
+              </p>
+            </div>
+          </li>
+          
+          <li>
+            
+            <div class="item-inner">
+              <p class="item-category">
+                <a class="category-link" href="/categories/%E5%BC%80%E5%8F%91/">开发</a>
+              </p>
+              <p class="item-title">
+                <a href="/2019/06/05/Redis%E7%9A%84%E6%95%B0%E6%8D%AE%E7%BB%93%E6%9E%84%E4%B8%8E%E7%BC%96%E7%A0%81/" class="title">Redis的数据结构与编码</a>
+              </p>
+              <p class="item-date">
+                <time datetime="2019-06-05T07:42:40.000Z" itemprop="datePublished">2019-06-05</time>
+              </p>
+            </div>
+          </li>
+          
+          <li>
+            
+            <div class="item-inner">
+              <p class="item-category">
+                <a class="category-link" href="/categories/%E5%BC%80%E5%8F%91/">开发</a>
+              </p>
+              <p class="item-title">
+                <a href="/2019/06/04/%E4%BB%8ERedis-I-O%E5%A4%9A%E8%B7%AF%E5%A4%8D%E7%94%A8%E5%88%B0Java-NIO-Selector/" class="title">从Redis I/O多路复用到Java NIO Selector</a>
+              </p>
+              <p class="item-date">
+                <time datetime="2019-06-04T07:19:21.000Z" itemprop="datePublished">2019-06-04</time>
+              </p>
+            </div>
+          </li>
+          
+          <li>
+            
+            <div class="item-inner">
+              <p class="item-category">
+                <a class="category-link" href="/categories/%E5%88%B7%E9%A2%98/">刷题</a>
+              </p>
+              <p class="item-title">
+                <a href="/2019/05/17/LeetCode-23-Merge-k-Sorted-Lists/" class="title">LeetCode 23. Merge k Sorted Lists</a>
+              </p>
+              <p class="item-date">
+                <time datetime="2019-05-17T08:53:24.000Z" itemprop="datePublished">2019-05-17</time>
+              </p>
+            </div>
+          </li>
+          
+      </ul>
+    </div>
+  </div>
+  
+
+    
+  </div>
+</aside>
+
+  
+  
+<main class="main" role="main">
+  <div class="content">
+  <article id="post-从Redis-I-O多路复用到Java-NIO-Selector" class="article article-type-post" itemscope itemtype="http://schema.org/BlogPosting">
+    
+    <div class="article-header">
+      
+        
+  
+    <h1 class="article-title" itemprop="name">
+      从Redis I/O多路复用到Java NIO Selector
+    </h1>
+  
+
+      
+      <div class="article-meta">
+        <span class="article-date">
+    <i class="icon icon-calendar-check"></i>
+	<a href="/2019/06/04/%E4%BB%8ERedis-I-O%E5%A4%9A%E8%B7%AF%E5%A4%8D%E7%94%A8%E5%88%B0Java-NIO-Selector/" class="article-date">
+	  <time datetime="2019-06-04T07:19:21.000Z" itemprop="datePublished">2019-06-04</time>
+	</a>
+</span>
+        
+  <span class="article-category">
+    <i class="icon icon-folder"></i>
+    <a class="article-category-link" href="/categories/%E5%BC%80%E5%8F%91/">开发</a>
+  </span>
+
+        
+  <span class="article-tag">
+    <i class="icon icon-tags"></i>
+	<a class="article-tag-link-link" href="/tags/Java/" rel="tag">Java</a>, <a class="article-tag-link-link" href="/tags/Redis/" rel="tag">Redis</a>
+  </span>
+
+
+        
+
+        <span class="post-comment"><i class="icon icon-comment"></i> <a href="/2019/06/04/%E4%BB%8ERedis-I-O%E5%A4%9A%E8%B7%AF%E5%A4%8D%E7%94%A8%E5%88%B0Java-NIO-Selector/#comments" class="article-comment-link">Comments</a></span>
+        
+      </div>
+    </div>
+    <div class="article-entry marked-body" itemprop="articleBody">
+      
+        <h3 id="Redis的I-O多路复用架构"><a href="#Redis的I-O多路复用架构" class="headerlink" title="Redis的I/O多路复用架构"></a>Redis的I/O多路复用架构</h3><p>Redis的一大特点就是单线程架构。单线程架构既避免了多线程可能产生的竞争问题，又避免了多线程的频繁上下文切换问题，是Redis高效率的保证。</p>
+<a id="more"></a>
+
+<p>对于网络I/O操作，Redis基于 Reactor 模式可以用单个线程处理多个Socket。内部实现为使用文件事件处理器(file event handler)进行网络事件处理器，这个文件事件处理器是单线程的。文件事件处理器采用<code> I/O 多路复用机制(multiplexing)</code>同时监听多个 socket。产生事件的 socket 压入内存队列中，事件分派器根据 socket 上的事件类型来选择对应的事件处理器进行处理。操作包括应答（accept）、读取（read）、写入（write）、关闭（close）等。文件事件处理器的结构包含 4 个部分：</p>
+<ul>
+<li>多个 socket</li>
+<li>I/O 多路复用程序</li>
+<li>文件事件分派器</li>
+<li>事件处理器（连接应答处理器、命令请求处理器、命令回复处理器）<br>连接应答处理器会创建一个能与客户端通信的 socket01，通过这个返回结果给客户端。Redis单线程的核心就是I/O 多路复用程序。</li>
+</ul>
+<p>I/O多路复用（IO Multiplexing）有时也称为异步阻塞IO，是一种事件驱动的I/O模型。单个I/O操作在一般情况下往往不能直接返回，传统的阻塞 I/O 模型会阻塞直到系统内核返回数据。而在 I/O 多路复用模型中，系统调用select/poll/epoll 函数会不断的查询所监测的 socket 文件描述符，查看其中是否有 socket 准备好读写了，如果有，那么系统就会通知用户进程。</p>
+<p>Redis 的 I/O 多路复用程序的所有功能都是通过包装常见的 select 、 epoll 、 evport 和 kqueue 这些 I/O 多路复用函数库来实现的， 每个 I/O 多路复用函数库在 Redis 源码中都对应一个单独的文件。</p>
+<p>以ae_select.c实现的封装select方法为例。<code>select</code>方法定义如下所示，检测是否可读、可写、异常，返回准备完毕的descriptors个数。</p>
+<figure class="highlight c"><table><tr><td class="gutter"><pre><span class="line">1</span><br><span class="line">2</span><br><span class="line">3</span><br><span class="line">4</span><br></pre></td><td class="code"><pre><span class="line"><span class="function"><span class="keyword">extern</span> <span class="keyword">int</span> <span class="title">select</span> <span class="params">(<span class="keyword">int</span> __nfds, fd_set *__restrict __readfds,</span></span></span><br><span class="line"><span class="function"><span class="params">		   fd_set *__restrict __writefds,</span></span></span><br><span class="line"><span class="function"><span class="params">		   fd_set *__restrict __exceptfds,</span></span></span><br><span class="line"><span class="function"><span class="params">		   struct timeval *__restrict __timeout)</span></span>;</span><br></pre></td></tr></table></figure>
+<p>Redis封装首先通过<code>aeApiCreate</code>初始化 rfds 和 wfds，注册到aeEventLoop中去。</p>
+<figure class="highlight c"><table><tr><td class="gutter"><pre><span class="line">1</span><br><span class="line">2</span><br><span class="line">3</span><br><span class="line">4</span><br><span class="line">5</span><br><span class="line">6</span><br><span class="line">7</span><br><span class="line">8</span><br><span class="line">9</span><br></pre></td><td class="code"><pre><span class="line"><span class="function"><span class="keyword">static</span> <span class="keyword">int</span> <span class="title">aeApiCreate</span><span class="params">(aeEventLoop *eventLoop)</span> </span>&#123;</span><br><span class="line">    aeApiState *state = zmalloc(<span class="keyword">sizeof</span>(aeApiState));</span><br><span class="line"></span><br><span class="line">    <span class="keyword">if</span> (!state) <span class="keyword">return</span> <span class="number">-1</span>;</span><br><span class="line">    FD_ZERO(&amp;state-&gt;rfds);</span><br><span class="line">    FD_ZERO(&amp;state-&gt;wfds);</span><br><span class="line">    eventLoop-&gt;apidata = state;</span><br><span class="line">    <span class="keyword">return</span> <span class="number">0</span>;</span><br><span class="line">&#125;</span><br></pre></td></tr></table></figure>
+<p>而 <code>aeApiAddEvent</code> 和 <code>aeApiDelEvent</code> 会通过 FD_SET 和 FD_CLR 修改 fd_set 中对应 FD 的标志位。</p>
+<figure class="highlight c"><table><tr><td class="gutter"><pre><span class="line">1</span><br><span class="line">2</span><br><span class="line">3</span><br><span class="line">4</span><br><span class="line">5</span><br><span class="line">6</span><br><span class="line">7</span><br><span class="line">8</span><br><span class="line">9</span><br><span class="line">10</span><br><span class="line">11</span><br><span class="line">12</span><br><span class="line">13</span><br><span class="line">14</span><br></pre></td><td class="code"><pre><span class="line"><span class="function"><span class="keyword">static</span> <span class="keyword">int</span> <span class="title">aeApiAddEvent</span><span class="params">(aeEventLoop *eventLoop, <span class="keyword">int</span> fd, <span class="keyword">int</span> mask)</span> </span>&#123;</span><br><span class="line">    aeApiState *state = eventLoop-&gt;apidata;</span><br><span class="line"></span><br><span class="line">    <span class="keyword">if</span> (mask &amp; AE_READABLE) FD_SET(fd,&amp;state-&gt;rfds);</span><br><span class="line">    <span class="keyword">if</span> (mask &amp; AE_WRITABLE) FD_SET(fd,&amp;state-&gt;wfds);</span><br><span class="line">    <span class="keyword">return</span> <span class="number">0</span>;</span><br><span class="line">&#125;</span><br><span class="line"></span><br><span class="line"><span class="function"><span class="keyword">static</span> <span class="keyword">void</span> <span class="title">aeApiDelEvent</span><span class="params">(aeEventLoop *eventLoop, <span class="keyword">int</span> fd, <span class="keyword">int</span> mask)</span> </span>&#123;</span><br><span class="line">    aeApiState *state = eventLoop-&gt;apidata;</span><br><span class="line"></span><br><span class="line">    <span class="keyword">if</span> (mask &amp; AE_READABLE) FD_CLR(fd,&amp;state-&gt;rfds);</span><br><span class="line">    <span class="keyword">if</span> (mask &amp; AE_WRITABLE) FD_CLR(fd,&amp;state-&gt;wfds);</span><br><span class="line">&#125;</span><br></pre></td></tr></table></figure>
+<p><code>aeApiPoll</code>是实际调用 select 函数的部分，其作用就是在 I/O 多路复用函数返回时，将对应的 FD 加入 aeEventLoop 的 fired 数组中，并返回事件的个数：</p>
+<figure class="highlight c"><table><tr><td class="gutter"><pre><span class="line">1</span><br><span class="line">2</span><br><span class="line">3</span><br><span class="line">4</span><br><span class="line">5</span><br><span class="line">6</span><br><span class="line">7</span><br><span class="line">8</span><br><span class="line">9</span><br><span class="line">10</span><br><span class="line">11</span><br><span class="line">12</span><br><span class="line">13</span><br><span class="line">14</span><br><span class="line">15</span><br><span class="line">16</span><br><span class="line">17</span><br><span class="line">18</span><br><span class="line">19</span><br><span class="line">20</span><br><span class="line">21</span><br><span class="line">22</span><br><span class="line">23</span><br><span class="line">24</span><br><span class="line">25</span><br><span class="line">26</span><br></pre></td><td class="code"><pre><span class="line"><span class="function"><span class="keyword">static</span> <span class="keyword">int</span> <span class="title">aeApiPoll</span><span class="params">(aeEventLoop *eventLoop, struct timeval *tvp)</span> </span>&#123;</span><br><span class="line">    aeApiState *state = eventLoop-&gt;apidata;</span><br><span class="line">    <span class="keyword">int</span> retval, j, numevents = <span class="number">0</span>;</span><br><span class="line"></span><br><span class="line">    <span class="built_in">memcpy</span>(&amp;state-&gt;_rfds,&amp;state-&gt;rfds,<span class="keyword">sizeof</span>(fd_set));</span><br><span class="line">    <span class="built_in">memcpy</span>(&amp;state-&gt;_wfds,&amp;state-&gt;wfds,<span class="keyword">sizeof</span>(fd_set));</span><br><span class="line"></span><br><span class="line">    retval = select(eventLoop-&gt;maxfd+<span class="number">1</span>,</span><br><span class="line">                &amp;state-&gt;_rfds,&amp;state-&gt;_wfds,<span class="literal">NULL</span>,tvp);</span><br><span class="line">    <span class="keyword">if</span> (retval &gt; <span class="number">0</span>) &#123;</span><br><span class="line">        <span class="keyword">for</span> (j = <span class="number">0</span>; j &lt;= eventLoop-&gt;maxfd; j++) &#123;</span><br><span class="line">            <span class="keyword">int</span> mask = <span class="number">0</span>;</span><br><span class="line">            aeFileEvent *fe = &amp;eventLoop-&gt;events[j];</span><br><span class="line"></span><br><span class="line">            <span class="keyword">if</span> (fe-&gt;mask == AE_NONE) <span class="keyword">continue</span>;</span><br><span class="line">            <span class="keyword">if</span> (fe-&gt;mask &amp; AE_READABLE &amp;&amp; FD_ISSET(j,&amp;state-&gt;_rfds))</span><br><span class="line">                mask |= AE_READABLE;</span><br><span class="line">            <span class="keyword">if</span> (fe-&gt;mask &amp; AE_WRITABLE &amp;&amp; FD_ISSET(j,&amp;state-&gt;_wfds))</span><br><span class="line">                mask |= AE_WRITABLE;</span><br><span class="line">            eventLoop-&gt;fired[numevents].fd = j;</span><br><span class="line">            eventLoop-&gt;fired[numevents].mask = mask;</span><br><span class="line">            numevents++;</span><br><span class="line">        &#125;</span><br><span class="line">    &#125;</span><br><span class="line">    <span class="keyword">return</span> numevents;</span><br><span class="line">&#125;</span><br></pre></td></tr></table></figure>
+<p>epoll函数的封装类似。区别在于 epoll_wait 函数返回时并不需要遍历所有的 FD 查看读写情况；在  epoll_wait 函数返回时会提供一个 epoll_event 数组，其中保存了发生的 epoll 事件（EPOLLIN、EPOLLOUT、EPOLLERR 和 EPOLLHUP）以及发生该事件的 FD。Redis封装的调用只需要将<code>epoll_event</code>数组中存储的信息加入eventLoop的 fired 数组中，将信息传递给上层模块：</p>
+<figure class="highlight c"><table><tr><td class="gutter"><pre><span class="line">1</span><br><span class="line">2</span><br><span class="line">3</span><br><span class="line">4</span><br><span class="line">5</span><br><span class="line">6</span><br><span class="line">7</span><br><span class="line">8</span><br><span class="line">9</span><br><span class="line">10</span><br><span class="line">11</span><br><span class="line">12</span><br><span class="line">13</span><br><span class="line">14</span><br><span class="line">15</span><br><span class="line">16</span><br><span class="line">17</span><br><span class="line">18</span><br><span class="line">19</span><br><span class="line">20</span><br><span class="line">21</span><br><span class="line">22</span><br><span class="line">23</span><br><span class="line">24</span><br></pre></td><td class="code"><pre><span class="line"><span class="function"><span class="keyword">static</span> <span class="keyword">int</span> <span class="title">aeApiPoll</span><span class="params">(aeEventLoop *eventLoop, struct timeval *tvp)</span> </span>&#123;</span><br><span class="line">    aeApiState *state = eventLoop-&gt;apidata;</span><br><span class="line">    <span class="keyword">int</span> retval, numevents = <span class="number">0</span>;</span><br><span class="line"></span><br><span class="line">    retval = epoll_wait(state-&gt;epfd,state-&gt;events,eventLoop-&gt;setsize,</span><br><span class="line">            tvp ? (tvp-&gt;tv_sec*<span class="number">1000</span> + tvp-&gt;tv_usec/<span class="number">1000</span>) : <span class="number">-1</span>);</span><br><span class="line">    <span class="keyword">if</span> (retval &gt; <span class="number">0</span>) &#123;</span><br><span class="line">        <span class="keyword">int</span> j;</span><br><span class="line"></span><br><span class="line">        numevents = retval;</span><br><span class="line">        <span class="keyword">for</span> (j = <span class="number">0</span>; j &lt; numevents; j++) &#123;</span><br><span class="line">            <span class="keyword">int</span> mask = <span class="number">0</span>;</span><br><span class="line">            <span class="class"><span class="keyword">struct</span> <span class="title">epoll_event</span> *<span class="title">e</span> =</span> state-&gt;events+j;</span><br><span class="line"></span><br><span class="line">            <span class="keyword">if</span> (e-&gt;events &amp; EPOLLIN) mask |= AE_READABLE;</span><br><span class="line">            <span class="keyword">if</span> (e-&gt;events &amp; EPOLLOUT) mask |= AE_WRITABLE;</span><br><span class="line">            <span class="keyword">if</span> (e-&gt;events &amp; EPOLLERR) mask |= AE_WRITABLE;</span><br><span class="line">            <span class="keyword">if</span> (e-&gt;events &amp; EPOLLHUP) mask |= AE_WRITABLE;</span><br><span class="line">            eventLoop-&gt;fired[j].fd = e-&gt;data.fd;</span><br><span class="line">            eventLoop-&gt;fired[j].mask = mask;</span><br><span class="line">        &#125;</span><br><span class="line">    &#125;</span><br><span class="line">    <span class="keyword">return</span> numevents;</span><br><span class="line">&#125;</span><br></pre></td></tr></table></figure>
+<p>当Socket变得可读时（客户端对Socket执行 write 操作，或者执行 close 操作）， 或者有新的可应答（acceptable）Socket出现时（客户端对服务器的监听Socket执行 connect 操作），Socket产生 AE_READABLE 事件。而当Socket变得可写时（客户端对Socket执行 read 操作）， Socket产生 AE_WRITABLE 事件。<br>I/O 多路复用程序允许服务器同时监听Socket的 AE_READABLE 事件和 AE_WRITABLE 事件， 如果一个Socket同时产生了这两种事件， 那么文件事件分派器会优先处理 AE_READABLE 事件， 等到 AE_READABLE 事件处理完之后， 才处理 AE_WRITABLE 事件。换句话说， 如果一个Socket又可读又可写的话， 那么服务器将先读Socket， 后写Socket。</p>
+<h3 id="Java-NIO-Selector"><a href="#Java-NIO-Selector" class="headerlink" title="Java NIO Selector"></a>Java NIO Selector</h3><p>Java中也有I/O多路复用的方式，例子为NIO的<code>Selector</code>。<br><code>selector</code>的创建方式为调用<code>Selector</code>类的静态方法，由<code>SelectorProvider</code>提供：<code>Selector selector = Selector.open();</code></p>
+<figure class="highlight java"><table><tr><td class="gutter"><pre><span class="line">1</span><br><span class="line">2</span><br><span class="line">3</span><br></pre></td><td class="code"><pre><span class="line"><span class="function"><span class="keyword">public</span> <span class="keyword">static</span> Selector <span class="title">open</span><span class="params">()</span> <span class="keyword">throws</span> IOException </span>&#123;</span><br><span class="line">    <span class="keyword">return</span> SelectorProvider.provider().openSelector();</span><br><span class="line">&#125;</span><br></pre></td></tr></table></figure>
+<p><code>SelectorProvider</code>是单例模式，Linux默认提供<code>EPollSelectorProvider</code>，即提供的Selector为<code>EPollSelectorImpl</code>。</p>
+<figure class="highlight java"><table><tr><td class="gutter"><pre><span class="line">1</span><br><span class="line">2</span><br><span class="line">3</span><br><span class="line">4</span><br><span class="line">5</span><br><span class="line">6</span><br><span class="line">7</span><br><span class="line">8</span><br><span class="line">9</span><br><span class="line">10</span><br><span class="line">11</span><br><span class="line">12</span><br><span class="line">13</span><br><span class="line">14</span><br><span class="line">15</span><br><span class="line">16</span><br><span class="line">17</span><br><span class="line">18</span><br><span class="line">19</span><br><span class="line">20</span><br><span class="line">21</span><br><span class="line">22</span><br><span class="line">23</span><br><span class="line">24</span><br><span class="line">25</span><br><span class="line">26</span><br><span class="line">27</span><br><span class="line">28</span><br><span class="line">29</span><br><span class="line">30</span><br><span class="line">31</span><br><span class="line">32</span><br></pre></td><td class="code"><pre><span class="line"><span class="function"><span class="keyword">public</span> <span class="keyword">static</span> SelectorProvider <span class="title">provider</span><span class="params">()</span> </span>&#123;</span><br><span class="line">    <span class="keyword">synchronized</span> (lock) &#123;</span><br><span class="line">        <span class="keyword">if</span> (provider != <span class="keyword">null</span>)</span><br><span class="line">            <span class="keyword">return</span> provider;</span><br><span class="line">        <span class="keyword">return</span> AccessController.doPrivileged(</span><br><span class="line">            <span class="keyword">new</span> PrivilegedAction&lt;SelectorProvider&gt;() &#123;</span><br><span class="line">                <span class="function"><span class="keyword">public</span> SelectorProvider <span class="title">run</span><span class="params">()</span> </span>&#123;</span><br><span class="line">                    <span class="keyword">if</span> (loadProviderFromProperty())</span><br><span class="line">                        <span class="keyword">return</span> provider;</span><br><span class="line">                    <span class="keyword">if</span> (loadProviderAsService())</span><br><span class="line">                        <span class="keyword">return</span> provider;</span><br><span class="line">                    provider = sun.nio.ch.DefaultSelectorProvider.create();</span><br><span class="line">                    <span class="keyword">return</span> provider;</span><br><span class="line">                &#125;</span><br><span class="line">            &#125;);</span><br><span class="line">    &#125;</span><br><span class="line">&#125;</span><br><span class="line"></span><br><span class="line"><span class="comment">//.....</span></span><br><span class="line"></span><br><span class="line"><span class="comment">/**</span></span><br><span class="line"><span class="comment">     * Returns the default SelectorProvider.</span></span><br><span class="line"><span class="comment">     */</span></span><br><span class="line"><span class="function"><span class="keyword">public</span> <span class="keyword">static</span> SelectorProvider <span class="title">create</span><span class="params">()</span> </span>&#123;</span><br><span class="line">    String osname = AccessController</span><br><span class="line">        .doPrivileged(<span class="keyword">new</span> GetPropertyAction(<span class="string">&quot;os.name&quot;</span>));</span><br><span class="line">    <span class="keyword">if</span> (osname.equals(<span class="string">&quot;SunOS&quot;</span>))</span><br><span class="line">        <span class="keyword">return</span> createProvider(<span class="string">&quot;sun.nio.ch.DevPollSelectorProvider&quot;</span>);</span><br><span class="line">    <span class="keyword">if</span> (osname.equals(<span class="string">&quot;Linux&quot;</span>))</span><br><span class="line">        <span class="keyword">return</span> createProvider(<span class="string">&quot;sun.nio.ch.EPollSelectorProvider&quot;</span>);</span><br><span class="line">    <span class="keyword">return</span> <span class="keyword">new</span> sun.nio.ch.PollSelectorProvider();</span><br><span class="line">&#125;</span><br></pre></td></tr></table></figure>
+<p>调用系统Epoll方法的地方在<code>EPollArrayWrapper</code>类的<code>poll</code>方法中，该类由<code>EPollSelectorImpl</code>持有：</p>
+<figure class="highlight java"><table><tr><td class="gutter"><pre><span class="line">1</span><br><span class="line">2</span><br><span class="line">3</span><br><span class="line">4</span><br><span class="line">5</span><br><span class="line">6</span><br><span class="line">7</span><br><span class="line">8</span><br><span class="line">9</span><br><span class="line">10</span><br><span class="line">11</span><br><span class="line">12</span><br></pre></td><td class="code"><pre><span class="line"><span class="function"><span class="keyword">int</span> <span class="title">poll</span><span class="params">(<span class="keyword">long</span> timeout)</span> <span class="keyword">throws</span> IOException </span>&#123;</span><br><span class="line">    updateRegistrations();</span><br><span class="line">    updated = epollWait(pollArrayAddress, NUM_EPOLLEVENTS, timeout, epfd);</span><br><span class="line">    <span class="keyword">for</span> (<span class="keyword">int</span> i=<span class="number">0</span>; i&lt;updated; i++) &#123;</span><br><span class="line">        <span class="keyword">if</span> (getDescriptor(i) == incomingInterruptFD) &#123;</span><br><span class="line">            interruptedIndex = i;</span><br><span class="line">            interrupted = <span class="keyword">true</span>;</span><br><span class="line">            <span class="keyword">break</span>;</span><br><span class="line">        &#125;</span><br><span class="line">    &#125;</span><br><span class="line">    <span class="keyword">return</span> updated;</span><br><span class="line">&#125;</span><br></pre></td></tr></table></figure>
+<p><code>Selector</code>使用中需要绑定<code>Channel</code>。以<code>ServerSocketChannel</code>为例：</p>
+<figure class="highlight java"><table><tr><td class="gutter"><pre><span class="line">1</span><br><span class="line">2</span><br><span class="line">3</span><br><span class="line">4</span><br></pre></td><td class="code"><pre><span class="line">ServerSocketChannel serverSocket = ServerSocketChannel.open();</span><br><span class="line">serverSocket.bind(<span class="keyword">new</span> InetSocketAddress(<span class="string">&quot;localhost&quot;</span>, <span class="number">5454</span>));</span><br><span class="line">serverSocket.configureBlocking(<span class="keyword">false</span>);</span><br><span class="line">serverSocket.register(selector, SelectionKey.OP_ACCEPT);</span><br></pre></td></tr></table></figure>
+<p>注册时会调用<code>Selector</code>的回调方法<code>register</code>，生成<code>SelectionKey</code>。</p>
+<figure class="highlight java"><table><tr><td class="gutter"><pre><span class="line">1</span><br><span class="line">2</span><br><span class="line">3</span><br><span class="line">4</span><br><span class="line">5</span><br><span class="line">6</span><br><span class="line">7</span><br><span class="line">8</span><br><span class="line">9</span><br><span class="line">10</span><br><span class="line">11</span><br><span class="line">12</span><br><span class="line">13</span><br><span class="line">14</span><br></pre></td><td class="code"><pre><span class="line"><span class="function"><span class="keyword">protected</span> <span class="keyword">final</span> SelectionKey <span class="title">register</span><span class="params">(AbstractSelectableChannel ch,</span></span></span><br><span class="line"><span class="function"><span class="params">                                      <span class="keyword">int</span> ops,</span></span></span><br><span class="line"><span class="function"><span class="params">                                      Object attachment)</span></span></span><br><span class="line"><span class="function"></span>&#123;</span><br><span class="line">    <span class="keyword">if</span> (!(ch <span class="keyword">instanceof</span> SelChImpl))</span><br><span class="line">        <span class="keyword">throw</span> <span class="keyword">new</span> IllegalSelectorException();</span><br><span class="line">    SelectionKeyImpl k = <span class="keyword">new</span> SelectionKeyImpl((SelChImpl)ch, <span class="keyword">this</span>);</span><br><span class="line">    k.attach(attachment);</span><br><span class="line">    <span class="keyword">synchronized</span> (publicKeys) &#123;</span><br><span class="line">        implRegister(k);</span><br><span class="line">    &#125;</span><br><span class="line">    k.interestOps(ops);</span><br><span class="line">    <span class="keyword">return</span> k;</span><br><span class="line">&#125;</span><br></pre></td></tr></table></figure>
+<p>最后在使用时根据<code>SelectionKeys</code>遍历查看状态。可以通过监听的事件有：</p>
+<ul>
+<li>Connect – OP_CONNECT client尝试连接</li>
+<li>Accept – OP_ACCEPT server端接受连接</li>
+<li>Read – OP_READ server端可以开始从channel里读取</li>
+<li>Write – OP_WRITE server端可以向channel里写</li>
+</ul>
+<p>使用方式类似：</p>
+<figure class="highlight java"><table><tr><td class="gutter"><pre><span class="line">1</span><br><span class="line">2</span><br><span class="line">3</span><br><span class="line">4</span><br><span class="line">5</span><br><span class="line">6</span><br><span class="line">7</span><br><span class="line">8</span><br><span class="line">9</span><br><span class="line">10</span><br><span class="line">11</span><br><span class="line">12</span><br><span class="line">13</span><br><span class="line">14</span><br><span class="line">15</span><br><span class="line">16</span><br><span class="line">17</span><br><span class="line">18</span><br></pre></td><td class="code"><pre><span class="line"><span class="keyword">while</span> (<span class="keyword">true</span>) &#123;</span><br><span class="line">    selector.select();</span><br><span class="line">    Set&lt;SelectionKey&gt; selectedKeys = selector.selectedKeys();</span><br><span class="line">    Iterator&lt;SelectionKey&gt; iter = selectedKeys.iterator();</span><br><span class="line">    <span class="keyword">while</span> (iter.hasNext()) &#123;</span><br><span class="line"></span><br><span class="line">        SelectionKey key = iter.next();</span><br><span class="line"></span><br><span class="line">        <span class="keyword">if</span> (key.isAcceptable()) &#123;</span><br><span class="line">            register(selector, serverSocket);</span><br><span class="line">        &#125;</span><br><span class="line"></span><br><span class="line">        <span class="keyword">if</span> (key.isReadable()) &#123;</span><br><span class="line">            answerWithEcho(buffer, key);</span><br><span class="line">        &#125;</span><br><span class="line">        iter.remove();</span><br><span class="line">    &#125;</span><br><span class="line">&#125;</span><br></pre></td></tr></table></figure>
+<p><code>Selector</code>的wakeup()方法主要作用是解除阻塞在Selector.select()/select(long)上的线程，立即返回，调用了本地的中断方法。可以在注册了新的channel或者事件、channel关闭，取消注册时使用，或者优先级更高的事件触发（如定时器事件），希望及时处理。</p>
+<p>通过NIO的I/O多路复用方式可以节约线程资源，提高网络I/O效率。</p>
+<h4 id="参考"><a href="#参考" class="headerlink" title="参考"></a>参考</h4><ul>
+<li><a target="_blank" rel="noopener" href="http://redisbook.com/preview/event/file_event.html">Redis 设计与实现-文件事件</a></li>
+<li><a target="_blank" rel="noopener" href="https://draveness.me/redis-io-multiplexing">Redis 和 I/O 多路复用</a></li>
+<li><a target="_blank" rel="noopener" href="https://www.baeldung.com/java-nio-selector">Introduction to the Java NIO Selector</a></li>
+</ul>
+
+      
+    </div>
+    <div class="article-footer">
+      <blockquote class="mt-2x">
+  <ul class="post-copyright list-unstyled">
+    
+    <li class="post-copyright-link hidden-xs">
+      <strong>本文链接：</strong>
+      <a href="https://yuitycc.me/2019/06/04/%E4%BB%8ERedis-I-O%E5%A4%9A%E8%B7%AF%E5%A4%8D%E7%94%A8%E5%88%B0Java-NIO-Selector/" title="从Redis I/O多路复用到Java NIO Selector" target="_blank" rel="external">https://yuitycc.me/2019/06/04/%E4%BB%8ERedis-I-O%E5%A4%9A%E8%B7%AF%E5%A4%8D%E7%94%A8%E5%88%B0Java-NIO-Selector/</a>
+    </li>
+    
+    <li class="post-copyright-license">
+      <strong>版权声明： </strong> 本博客所有文章除特别声明外，均采用 <a href="http://creativecommons.org/licenses/by/4.0/deed.zh" target="_blank" rel="external">CC BY 4.0 CN协议</a> 许可协议。转载请注明出处！
+    </li>
+  </ul>
+</blockquote>
+
+
+<div class="panel panel-default panel-badger">
+  <div class="panel-body">
+    <figure class="media">
+      <div class="media-left">
+        <a href="https://github.com/YuiTycc" target="_blank" class="img-burn thumb-sm visible-lg">
+          <img src="/images/avatar.jpg" class="img-rounded w-full" alt="">
+        </a>
+      </div>
+      <div class="media-body">
+        <h3 class="media-heading"><a href="https://github.com/YuiTycc" target="_blank"><span class="text-dark">YuiTycc</span><small class="ml-1x">a</small></a></h3>
+        <div>个人简介。</div>
+      </div>
+    </figure>
+  </div>
+</div>
+
+
+    </div>
+  </article>
+  
+    
+  <section id="comments">
+  	
+      <div id="vcomments"></div>
+    
+  </section>
+
+
+  
+</div>
+
+  <nav class="bar bar-footer clearfix" data-stick-bottom>
+  <div class="bar-inner">
+  
+  <ul class="pager pull-left">
+    
+    <li class="prev">
+      <a href="/2019/06/05/Redis%E7%9A%84%E6%95%B0%E6%8D%AE%E7%BB%93%E6%9E%84%E4%B8%8E%E7%BC%96%E7%A0%81/" title="Redis的数据结构与编码"><i class="icon icon-angle-left" aria-hidden="true"></i><span>&nbsp;&nbsp;Newer</span></a>
+    </li>
+    
+    
+    <li class="next">
+      <a href="/2019/05/17/LeetCode-23-Merge-k-Sorted-Lists/" title="LeetCode 23. Merge k Sorted Lists"><span>Older&nbsp;&nbsp;</span><i class="icon icon-angle-right" aria-hidden="true"></i></a>
+    </li>
+    
+    
+  </ul>
+  
+  
+  
+  <div class="bar-right">
+    
+    <div class="share-component" data-sites="weibo,qq,wechat,facebook,twitter" data-mobile-sites="weibo,qq,qzone"></div>
+    
+  </div>
+  </div>
+</nav>
+  
+
+
+</main>
+
+  <footer class="footer" itemscope itemtype="http://schema.org/WPFooter">
+	
+	
+    <ul class="social-links">
+    	
+        <li><a href="https://github.com/YuiTycc" target="_blank" title="Github" data-toggle=tooltip data-placement=top><i class="icon icon-github"></i></a></li>
+        
+    </ul>
+
+    <div class="copyright">
+    	
+        <div class="publishby">
+        	Theme by <a href="https://github.com/cofess" target="_blank"> cofess </a>base on <a href="https://github.com/cofess/hexo-theme-pure" target="_blank">pure</a>.
+        </div>
+    </div>
+</footer>
+  <script src="//cdn.jsdelivr.net/npm/jquery@1.12.4/dist/jquery.min.js"></script>
+<script>
+window.jQuery || document.write('<script src="js/jquery.min.js"><\/script>')
+</script>
+
+<script src="/js/plugin.min.js"></script>
+
+
+<script src="/js/application.js"></script>
+
+
+    <script>
+(function (window) {
+    var INSIGHT_CONFIG = {
+        TRANSLATION: {
+            POSTS: 'Posts',
+            PAGES: 'Pages',
+            CATEGORIES: 'Categories',
+            TAGS: 'Tags',
+            UNTITLED: '(Untitled)',
+        },
+        ROOT_URL: '/',
+        CONTENT_URL: '/content.json',
+    };
+    window.INSIGHT_CONFIG = INSIGHT_CONFIG;
+})(window);
+</script>
+
+<script src="/js/insight.js"></script>
+
+
+
+
+
+
+   
+
+
+
+
+   
+    
+  <script src="//cdn1.lncld.net/static/js/3.0.4/av-min.js"></script>
+  <script src="//cdn.jsdelivr.net/npm/valine"></script>
+  <script type="text/javascript">
+  var GUEST = ['nick', 'mail', 'link'];
+  var meta = 'nick,mail,link';
+  meta = meta.split(',').filter(function(item) {
+    return GUEST.indexOf(item) > -1;
+  });
+  new Valine({
+    el: '#vcomments',
+    verify: false,
+    notify: false,
+    appId: '',
+    appKey: '',
+    placeholder: 'Just go go',
+    avatar: 'mm',
+    meta: meta,
+    pageSize: '10' || 10,
+    visitor: false
+  });
+  </script>
+
+     
+
+
+
+
+
+
+
+</body>
+</html>
